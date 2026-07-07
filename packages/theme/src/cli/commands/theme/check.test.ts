@@ -3,6 +3,7 @@ import {describe, vi, expect, test, beforeEach} from 'vitest'
 import {Config} from '@oclif/core'
 import {
   themeCheckRun,
+  loadConfig,
   Theme,
   Config as ThemeConfig,
   Offense,
@@ -224,6 +225,16 @@ describe('Check', () => {
     const themeRoot = joinPath(__dirname, '../../utilities/fixtures/theme')
     const fixtureFile = joinPath(themeRoot, 'sections/announcement-bar.liquid')
 
+    beforeEach(() => {
+      // No `root:` redirection by default: the effective root matches --path.
+      vi.mocked(loadConfig).mockResolvedValue({
+        context: 'theme',
+        settings: {},
+        checks: [],
+        rootUri: `file://${themeRoot}`,
+      })
+    })
+
     test('resolves the target relative to --path and checks the same root, filtering to that target', async () => {
       const targetOffense: Offense = {
         type: SourceCodeType.LiquidHtml,
@@ -297,6 +308,55 @@ describe('Check', () => {
 
       await CommandConfig.load()
       const check = new Check([`--path=${themeRoot}`, 'sections/does-not-exist.liquid'], CommandConfig)
+
+      await expect(check.run()).rejects.toThrow('exit')
+      expect(exitSpy).toHaveBeenCalledWith(1)
+      expect(themeCheckRun).not.toHaveBeenCalled()
+    })
+
+    test('resolves the target against the effective root when .theme-check.yml redirects it', async () => {
+      const redirectedRoot = joinPath(themeRoot, 'sections')
+      vi.mocked(loadConfig).mockResolvedValue({
+        context: 'theme',
+        settings: {},
+        checks: [],
+        rootUri: `file://${redirectedRoot}`,
+      })
+
+      vi.mocked(themeCheckRun).mockImplementation(async (root) => {
+        expect(root).toBe(themeRoot)
+        return {offenses: [], theme: [], config: {context: 'theme', settings: {}, checks: [], rootUri: ''}}
+      })
+
+      await CommandConfig.load()
+      // announcement-bar.liquid lives directly under the redirected root
+      // (themeRoot/sections), not under the raw --path value. If target
+      // resolution fell back to --path, resolveTarget would exit(1) before
+      // themeCheckRun is ever called.
+      const check = new Check([`--path=${themeRoot}`, 'announcement-bar.liquid'], CommandConfig)
+      await check.run()
+
+      expect(process.exit).not.toHaveBeenCalledWith(1)
+      expect(themeCheckRun).toHaveBeenCalledWith(themeRoot, undefined, expect.any(Function))
+    })
+
+    test('rejects a target that only exists relative to the raw --path, not the effective root', async () => {
+      const redirectedRoot = joinPath(themeRoot, 'sections')
+      vi.mocked(loadConfig).mockResolvedValue({
+        context: 'theme',
+        settings: {},
+        checks: [],
+        rootUri: `file://${redirectedRoot}`,
+      })
+
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+        throw new Error('exit')
+      })
+
+      await CommandConfig.load()
+      // layout/theme.liquid exists under themeRoot, but not under the
+      // redirected root (themeRoot/sections).
+      const check = new Check([`--path=${themeRoot}`, 'layout/theme.liquid'], CommandConfig)
 
       await expect(check.run()).rejects.toThrow('exit')
       expect(exitSpy).toHaveBeenCalledWith(1)

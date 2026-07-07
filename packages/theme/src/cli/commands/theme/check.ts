@@ -17,7 +17,7 @@ import {Args, Flags} from '@oclif/core'
 import {globalFlags} from '@shopify/cli-kit/node/cli'
 import {outputResult, outputDebug} from '@shopify/cli-kit/node/output'
 import {renderError, renderInfo, renderSuccess} from '@shopify/cli-kit/node/ui'
-import {themeCheckRun, LegacyIdentifiers, path as pathUtils} from '@shopify/theme-check-node'
+import {themeCheckRun, loadConfig, LegacyIdentifiers, path as pathUtils} from '@shopify/theme-check-node'
 import {findPathUp, fileExistsSync, isDirectorySync, matchGlob} from '@shopify/cli-kit/node/fs'
 import {moduleDirectory, joinPath, resolvePath, relativePath, isAbsolutePath} from '@shopify/cli-kit/node/path'
 import {getPackageVersion} from '@shopify/cli-kit/node/node-package-manager'
@@ -112,9 +112,13 @@ export default class Check extends ThemeCommand {
 
     // The target argument builds on top of --path: it can narrow the check
     // down to a single file, a subdirectory, or a glob pattern within the
-    // theme rooted at --path.
+    // theme rooted at --path. .theme-check.yml can redirect the actual theme
+    // root via its own `root:` property, so the target needs to be resolved
+    // against that effective root rather than the raw --path value.
     const isTargetGlob = args.target ? isGlobPattern(args.target) : false
-    const target = args.target ? resolveTarget(path, args.target, isTargetGlob) : undefined
+    const target = args.target
+      ? resolveTarget(await resolveEffectiveRoot(path, config), args.target, isTargetGlob)
+      : undefined
 
     if (target && !isTargetGlob && !isDirectorySync(target) && !/\.(?:liquid|json)$/.test(target)) {
       renderError({
@@ -182,6 +186,17 @@ const GLOB_METACHARACTERS = /[*?{}[\]]/
  */
 function isGlobPattern(target: string): boolean {
   return GLOB_METACHARACTERS.test(target)
+}
+
+/**
+ * .theme-check.yml can redirect the actual theme root via its own `root:`
+ * property, relative to --path. Loading the config mirrors what
+ * themeCheckRun does internally, so the target resolves against the same
+ * root theme-check actually scans.
+ */
+async function resolveEffectiveRoot(root: string, config?: string): Promise<string> {
+  const {rootUri} = await loadConfig(config, root)
+  return pathUtils.fsPath(rootUri)
 }
 
 /**
