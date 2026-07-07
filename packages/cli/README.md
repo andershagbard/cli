@@ -86,7 +86,7 @@
 * [`shopify store execute`](#shopify-store-execute)
 * [`shopify store graphiql`](#shopify-store-graphiql)
 * [`shopify store info`](#shopify-store-info)
-* [`shopify theme check [PATH]`](#shopify-theme-check-path)
+* [`shopify theme check [TARGET]`](#shopify-theme-check-target)
 * [`shopify theme console`](#shopify-theme-console)
 * [`shopify theme delete`](#shopify-theme-delete)
 * [`shopify theme dev`](#shopify-theme-dev)
@@ -3591,18 +3591,19 @@ EXAMPLES
   $ shopify store info --store shop.myshopify.com --json
 ```
 
-## `shopify theme check [PATH]`
+## `shopify theme check [TARGET]`
 
 Validate the theme.
 
 ```
 USAGE
-  $ shopify theme check [PATH] [-a] [-C <value>] [-e <value>...] [--fail-level
+  $ shopify theme check [TARGET] [-a] [-C <value>] [-e <value>...] [--fail-level
     crash|error|suggestion|style|warning|info] [--init] [--list] [--no-color] [-o text|json] [--path <value>] [--print]
     [--verbose] [-v]
 
 ARGUMENTS
-  [PATH]  Path to a theme file or directory to check. Defaults to checking the whole theme (see --path).
+  [TARGET]  A theme file or directory to check, relative to --path. When provided, only offenses for that file or
+            directory are reported.
 
 FLAGS
   -C, --config=<value>

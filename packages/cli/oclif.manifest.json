@@ -6925,9 +6925,9 @@
       "aliases": [
       ],
       "args": {
-        "path": {
-          "description": "Path to a theme file or directory to check. Defaults to checking the whole theme (see --path).",
-          "name": "path",
+        "target": {
+          "description": "A theme file or directory to check, relative to --path. When provided, only offenses for that file or directory are reported.",
+          "name": "target",
           "required": false
         }
       },

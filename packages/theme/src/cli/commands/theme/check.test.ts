@@ -6,7 +6,6 @@ import {
   Theme,
   Config as ThemeConfig,
   Offense,
-  findRoot,
   Severity,
   SourceCodeType,
   path as pathUtils,
@@ -95,7 +94,7 @@ describe('Check', () => {
     })
   })
 
-  describe('runThemeCheck with a target file', () => {
+  describe('runThemeCheck with a target', () => {
     function offense(uri: string, check: string): Offense {
       return {
         type: SourceCodeType.LiquidHtml,
@@ -108,7 +107,7 @@ describe('Check', () => {
       }
     }
 
-    test('filters offenses and source codes down to the target file only', async () => {
+    test('filters offenses and source codes down to a target file only', async () => {
       const targetFile = '/my-theme/sections/target.liquid'
       const targetOffense = offense(`file://${targetFile}`, 'TargetCheck')
       const otherOffense = offense('file:///my-theme/sections/other.liquid', 'OtherCheck')
@@ -126,7 +125,28 @@ describe('Check', () => {
       expect(theme).toEqual([{uri: `file://${targetFile}`}])
     })
 
-    test('returns every offense and source code when no target file is provided', async () => {
+    test('filters offenses and source codes down to files within a target directory', async () => {
+      const targetDir = '/my-theme/sections'
+      const insideOffense = offense('file:///my-theme/sections/inside.liquid', 'InsideCheck')
+      const outsideOffense = offense('file:///my-theme/snippets/outside.liquid', 'OutsideCheck')
+      const mockTheme = [
+        {uri: 'file:///my-theme/sections/inside.liquid'},
+        {uri: 'file:///my-theme/snippets/outside.liquid'},
+      ] as Theme
+
+      vi.mocked(themeCheckRun).mockResolvedValue({
+        offenses: [insideOffense, outsideOffense],
+        theme: mockTheme,
+        config: {context: 'theme', settings: {}, checks: [], rootUri: ''},
+      })
+
+      const {offenses, theme} = await runThemeCheck('/my-theme', 'json', undefined, undefined, targetDir)
+
+      expect(offenses).toEqual([insideOffense])
+      expect(theme).toEqual([{uri: 'file:///my-theme/sections/inside.liquid'}])
+    })
+
+    test('returns every offense and source code when no target is provided', async () => {
       const targetOffense = offense('file:///my-theme/sections/target.liquid', 'TargetCheck')
       const otherOffense = offense('file:///my-theme/sections/other.liquid', 'OtherCheck')
       const mockTheme = [
@@ -147,13 +167,11 @@ describe('Check', () => {
     })
   })
 
-  describe('run with a single file argument', () => {
-    const fixtureFile = joinPath(__dirname, '../../utilities/fixtures/theme/sections/announcement-bar.liquid')
+  describe('run with --path and a target argument', () => {
     const themeRoot = joinPath(__dirname, '../../utilities/fixtures/theme')
+    const fixtureFile = joinPath(themeRoot, 'sections/announcement-bar.liquid')
 
-    test('resolves the theme root for the file and checks it, filtering to that file', async () => {
-      vi.mocked(findRoot).mockResolvedValue(`file://${themeRoot}`)
-
+    test('resolves the target relative to --path and checks the same root, filtering to that target', async () => {
       const targetOffense: Offense = {
         type: SourceCodeType.LiquidHtml,
         check: 'SomeCheck',
@@ -174,19 +192,45 @@ describe('Check', () => {
       })
 
       await CommandConfig.load()
-      const check = new Check([fixtureFile], CommandConfig)
+      const check = new Check([`--path=${themeRoot}`, 'sections/announcement-bar.liquid'], CommandConfig)
       await check.run()
 
       expect(themeCheckRun).toHaveBeenCalledWith(themeRoot, undefined, expect.any(Function))
     })
 
-    test('rejects a file that is not a .liquid or .json file', async () => {
+    test('resolves a target directory relative to --path without an extension check', async () => {
+      vi.mocked(themeCheckRun).mockImplementation(async (root) => {
+        expect(root).toBe(themeRoot)
+        return {offenses: [], theme: [], config: {context: 'theme', settings: {}, checks: [], rootUri: ''}}
+      })
+
+      await CommandConfig.load()
+      const check = new Check([`--path=${themeRoot}`, 'sections'], CommandConfig)
+      await check.run()
+
+      expect(themeCheckRun).toHaveBeenCalledWith(themeRoot, undefined, expect.any(Function))
+    })
+
+    test('rejects a target that is not a .liquid or .json file', async () => {
       const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
         throw new Error('exit')
       })
 
       await CommandConfig.load()
-      const check = new Check([joinPath(themeRoot, 'assets/base.css')], CommandConfig)
+      const check = new Check([`--path=${themeRoot}`, 'assets/base.css'], CommandConfig)
+
+      await expect(check.run()).rejects.toThrow('exit')
+      expect(exitSpy).toHaveBeenCalledWith(1)
+      expect(themeCheckRun).not.toHaveBeenCalled()
+    })
+
+    test('rejects a target that does not exist', async () => {
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+        throw new Error('exit')
+      })
+
+      await CommandConfig.load()
+      const check = new Check([`--path=${themeRoot}`, 'sections/does-not-exist.liquid'], CommandConfig)
 
       await expect(check.run()).rejects.toThrow('exit')
       expect(exitSpy).toHaveBeenCalledWith(1)
