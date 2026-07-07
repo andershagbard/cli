@@ -165,6 +165,59 @@ describe('Check', () => {
       expect(offenses).toEqual([targetOffense, otherOffense])
       expect(theme).toEqual(mockTheme)
     })
+
+    test('filters offenses and source codes using a glob pattern target', async () => {
+      const matchingOffense = offense('file:///my-theme/sections/header.liquid', 'MatchCheck')
+      const nonMatchingOffense = offense('file:///my-theme/sections/footer.json', 'NonMatchCheck')
+      const mockTheme = [
+        {uri: 'file:///my-theme/sections/header.liquid'},
+        {uri: 'file:///my-theme/sections/footer.json'},
+      ] as Theme
+
+      vi.mocked(themeCheckRun).mockResolvedValue({
+        offenses: [matchingOffense, nonMatchingOffense],
+        theme: mockTheme,
+        config: {context: 'theme', settings: {}, checks: [], rootUri: ''},
+      })
+
+      const {offenses, theme} = await runThemeCheck(
+        '/my-theme',
+        'json',
+        undefined,
+        undefined,
+        '/my-theme/sections/*.liquid',
+        true,
+      )
+
+      expect(offenses).toEqual([matchingOffense])
+      expect(theme).toEqual([{uri: 'file:///my-theme/sections/header.liquid'}])
+    })
+
+    test('matches a glob pattern recursively across subdirectories', async () => {
+      const nestedOffense = offense('file:///my-theme/sections/nested/header.liquid', 'NestedCheck')
+      const otherOffense = offense('file:///my-theme/snippets/other.liquid', 'OtherCheck')
+      const mockTheme = [
+        {uri: 'file:///my-theme/sections/nested/header.liquid'},
+        {uri: 'file:///my-theme/snippets/other.liquid'},
+      ] as Theme
+
+      vi.mocked(themeCheckRun).mockResolvedValue({
+        offenses: [nestedOffense, otherOffense],
+        theme: mockTheme,
+        config: {context: 'theme', settings: {}, checks: [], rootUri: ''},
+      })
+
+      const {offenses} = await runThemeCheck(
+        '/my-theme',
+        'json',
+        undefined,
+        undefined,
+        '/my-theme/sections/**/*.liquid',
+        true,
+      )
+
+      expect(offenses).toEqual([nestedOffense])
+    })
   })
 
   describe('run with --path and a target argument', () => {
@@ -222,6 +275,19 @@ describe('Check', () => {
       await expect(check.run()).rejects.toThrow('exit')
       expect(exitSpy).toHaveBeenCalledWith(1)
       expect(themeCheckRun).not.toHaveBeenCalled()
+    })
+
+    test('accepts a glob pattern target and skips the existence/extension checks', async () => {
+      vi.mocked(themeCheckRun).mockImplementation(async (root) => {
+        expect(root).toBe(themeRoot)
+        return {offenses: [], theme: [], config: {context: 'theme', settings: {}, checks: [], rootUri: ''}}
+      })
+
+      await CommandConfig.load()
+      const check = new Check([`--path=${themeRoot}`, 'sections/*.liquid'], CommandConfig)
+      await check.run()
+
+      expect(themeCheckRun).toHaveBeenCalledWith(themeRoot, undefined, expect.any(Function))
     })
 
     test('rejects a target that does not exist', async () => {

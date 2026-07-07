@@ -18,7 +18,7 @@ import {globalFlags} from '@shopify/cli-kit/node/cli'
 import {outputResult, outputDebug} from '@shopify/cli-kit/node/output'
 import {renderError, renderInfo, renderSuccess} from '@shopify/cli-kit/node/ui'
 import {themeCheckRun, LegacyIdentifiers, path as pathUtils} from '@shopify/theme-check-node'
-import {findPathUp, fileExistsSync, isDirectorySync} from '@shopify/cli-kit/node/fs'
+import {findPathUp, fileExistsSync, isDirectorySync, matchGlob} from '@shopify/cli-kit/node/fs'
 import {moduleDirectory, joinPath, resolvePath, relativePath, isAbsolutePath} from '@shopify/cli-kit/node/path'
 import {getPackageVersion} from '@shopify/cli-kit/node/node-package-manager'
 import {InferredArgs, InferredFlags} from '@oclif/core/interfaces'
@@ -37,7 +37,7 @@ export default class Check extends ThemeCommand {
     target: Args.string({
       name: 'target',
       description:
-        'A theme file or directory to check, relative to --path. When provided, only offenses for that file or directory are reported.',
+        'A theme file, directory, or glob pattern to check, relative to --path (e.g. "sections/*.liquid"). When provided, only offenses matching it are reported.',
       required: false,
     }),
   }
@@ -111,10 +111,12 @@ export default class Check extends ThemeCommand {
     const config = isLegacyConfig ? LegacyIdentifiers.get(flags.config!.slice(1)) : flags.config
 
     // The target argument builds on top of --path: it can narrow the check
-    // down to a single file or a subdirectory of the theme rooted at --path.
-    const target = args.target ? resolveTarget(path, args.target) : undefined
+    // down to a single file, a subdirectory, or a glob pattern within the
+    // theme rooted at --path.
+    const isTargetGlob = args.target ? isGlobPattern(args.target) : false
+    const target = args.target ? resolveTarget(path, args.target, isTargetGlob) : undefined
 
-    if (target && !isDirectorySync(target) && !/\.(?:liquid|json)$/.test(target)) {
+    if (target && !isTargetGlob && !isDirectorySync(target) && !/\.(?:liquid|json)$/.test(target)) {
       renderError({
         headline: 'Theme Check only supports .liquid and .json files.',
         body: [`Please check the path and try again: ${target}`],
@@ -160,7 +162,7 @@ export default class Check extends ThemeCommand {
       return
     }
 
-    const {offenses, theme} = await runThemeCheck(path, flags.output, config, environment, target)
+    const {offenses, theme} = await runThemeCheck(path, flags.output, config, environment, target, isTargetGlob)
 
     if (flags['auto-correct']) {
       await performAutoFixes(theme, offenses)
@@ -172,12 +174,28 @@ export default class Check extends ThemeCommand {
   }
 }
 
+const GLOB_METACHARACTERS = /[*?{}[\]]/
+
+/**
+ * Whether a target argument should be treated as a glob pattern rather than
+ * a literal file or directory path.
+ */
+function isGlobPattern(target: string): boolean {
+  return GLOB_METACHARACTERS.test(target)
+}
+
 /**
  * Resolves the `target` argument against the theme root (--path). Absolute
  * targets are used as-is; relative ones are resolved on top of the root.
+ * Glob patterns aren't checked for existence, since they describe a set of
+ * files rather than a single path.
  */
-function resolveTarget(root: string, target: string): string {
+function resolveTarget(root: string, target: string, isGlob: boolean): string {
   const resolvedTarget = resolvePath(root, target)
+
+  if (isGlob) {
+    return resolvedTarget
+  }
 
   if (!fileExistsSync(resolvedTarget)) {
     renderError({
@@ -201,12 +219,28 @@ function isWithinTarget(filePath: string, target: string): boolean {
   return relative !== '' && !relative.startsWith('..') && !isAbsolutePath(relative)
 }
 
+/**
+ * minimatch (used by matchGlob) expects forward slashes on all platforms.
+ */
+function toGlobPath(value: string): string {
+  return value.replace(/\\/g, '/')
+}
+
+function matchesTarget(filePath: string, target: string, isTargetGlob: boolean): boolean {
+  if (isTargetGlob) {
+    return matchGlob(toGlobPath(filePath), toGlobPath(target))
+  }
+
+  return isWithinTarget(filePath, target)
+}
+
 export async function runThemeCheck(
   path: string,
   outputFormat: string,
   config?: string,
   environment?: string,
   target?: string,
+  isTargetGlob = false,
 ) {
   const {offenses: allOffenses, theme: allSourceCodes} = await themeCheckRun(path, config, (message) => {
     if (process.env.SHOPIFY_TMP_FLAG_DEBUG) {
@@ -215,10 +249,10 @@ export async function runThemeCheck(
   })
 
   const offenses = target
-    ? allOffenses.filter((offense) => isWithinTarget(pathUtils.fsPath(offense.uri), target))
+    ? allOffenses.filter((offense) => matchesTarget(pathUtils.fsPath(offense.uri), target, isTargetGlob))
     : allOffenses
   const theme = target
-    ? allSourceCodes.filter((sourceCode) => isWithinTarget(pathUtils.fsPath(sourceCode.uri), target))
+    ? allSourceCodes.filter((sourceCode) => matchesTarget(pathUtils.fsPath(sourceCode.uri), target, isTargetGlob))
     : allSourceCodes
 
   const offensesByFile = sortOffenses(offenses)

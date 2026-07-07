@@ -3602,8 +3602,8 @@ USAGE
     [--verbose] [-v]
 
 ARGUMENTS
-  [TARGET]  A theme file or directory to check, relative to --path. When provided, only offenses for that file or
-            directory are reported.
+  [TARGET]  A theme file, directory, or glob pattern to check, relative to --path (e.g. "sections/*.liquid"). When
+            provided, only offenses matching it are reported.
 
 FLAGS
   -C, --config=<value>
