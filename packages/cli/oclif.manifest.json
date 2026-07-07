@@ -6925,10 +6925,15 @@
       "aliases": [
       ],
       "args": {
+        "path": {
+          "description": "Path to a theme file or directory to check. Defaults to checking the whole theme (see --path).",
+          "name": "path",
+          "required": false
+        }
       },
       "customPluginName": "@shopify/theme",
-      "description": "Calls and runs \"Theme Check\" (https://shopify.dev/docs/themes/tools/theme-check) to analyze your theme code for errors and to ensure that it follows theme and Liquid best practices. \"Learn more about the checks that Theme Check runs.\" (https://shopify.dev/docs/themes/tools/theme-check/checks)",
-      "descriptionWithMarkdown": "Calls and runs [Theme Check](https://shopify.dev/docs/themes/tools/theme-check) to analyze your theme code for errors and to ensure that it follows theme and Liquid best practices. [Learn more about the checks that Theme Check runs.](https://shopify.dev/docs/themes/tools/theme-check/checks)",
+      "description": "Calls and runs \"Theme Check\" (https://shopify.dev/docs/themes/tools/theme-check) to analyze your theme code for errors and to ensure that it follows theme and Liquid best practices. \"Learn more about the checks that Theme Check runs.\" (https://shopify.dev/docs/themes/tools/theme-check/checks) Pass a path to a single `.liquid` or `.json` theme file to check only that file.",
+      "descriptionWithMarkdown": "Calls and runs [Theme Check](https://shopify.dev/docs/themes/tools/theme-check) to analyze your theme code for errors and to ensure that it follows theme and Liquid best practices. [Learn more about the checks that Theme Check runs.](https://shopify.dev/docs/themes/tools/theme-check/checks) Pass a path to a single `.liquid` or `.json` theme file to check only that file.",
       "flags": {
         "auto-correct": {
           "allowNo": false,
@@ -7061,7 +7066,8 @@
       "pluginName": "@shopify/cli",
       "pluginType": "core",
       "strict": true,
-      "summary": "Validate the theme."
+      "summary": "Validate the theme.",
+      "usage": "theme check [path] [flags]"
     },
     "theme:console": {
       "aliases": [

@@ -1,7 +1,17 @@
-import Check from './check.js'
+import Check, {runThemeCheck} from './check.js'
 import {describe, vi, expect, test, beforeEach} from 'vitest'
 import {Config} from '@oclif/core'
-import {themeCheckRun, Theme, Config as ThemeConfig, Offense} from '@shopify/theme-check-node'
+import {
+  themeCheckRun,
+  Theme,
+  Config as ThemeConfig,
+  Offense,
+  findRoot,
+  Severity,
+  SourceCodeType,
+  path as pathUtils,
+} from '@shopify/theme-check-node'
+import {joinPath} from '@shopify/cli-kit/node/path'
 
 vi.mock('@shopify/theme-check-node')
 const CommandConfig = new Config({root: __dirname})
@@ -12,6 +22,11 @@ describe('Check', () => {
     vi.spyOn(process, 'exit').mockImplementation(() => {
       return undefined as never
     })
+
+    // The whole module is auto-mocked above, so `path.fsPath` (used to compare
+    // offense/source-code URIs against the requested file) needs a concrete
+    // implementation for the filtering assertions to be meaningful.
+    vi.mocked(pathUtils.fsPath).mockImplementation((uri) => (uri as string).replace(/^file:\/\//, ''))
   })
 
   describe('run', () => {
@@ -77,6 +92,105 @@ describe('Check', () => {
       })
 
       await run([`--config=${expectedConfig}`])
+    })
+  })
+
+  describe('runThemeCheck with a target file', () => {
+    function offense(uri: string, check: string): Offense {
+      return {
+        type: SourceCodeType.LiquidHtml,
+        check,
+        message: 'Some message',
+        uri,
+        severity: Severity.WARNING,
+        start: {index: 0, line: 0, character: 0},
+        end: {index: 1, line: 0, character: 1},
+      }
+    }
+
+    test('filters offenses and source codes down to the target file only', async () => {
+      const targetFile = '/my-theme/sections/target.liquid'
+      const targetOffense = offense(`file://${targetFile}`, 'TargetCheck')
+      const otherOffense = offense('file:///my-theme/sections/other.liquid', 'OtherCheck')
+      const mockTheme = [{uri: `file://${targetFile}`}, {uri: 'file:///my-theme/sections/other.liquid'}] as Theme
+
+      vi.mocked(themeCheckRun).mockResolvedValue({
+        offenses: [targetOffense, otherOffense],
+        theme: mockTheme,
+        config: {context: 'theme', settings: {}, checks: [], rootUri: ''},
+      })
+
+      const {offenses, theme} = await runThemeCheck('/my-theme', 'json', undefined, undefined, targetFile)
+
+      expect(offenses).toEqual([targetOffense])
+      expect(theme).toEqual([{uri: `file://${targetFile}`}])
+    })
+
+    test('returns every offense and source code when no target file is provided', async () => {
+      const targetOffense = offense('file:///my-theme/sections/target.liquid', 'TargetCheck')
+      const otherOffense = offense('file:///my-theme/sections/other.liquid', 'OtherCheck')
+      const mockTheme = [
+        {uri: 'file:///my-theme/sections/target.liquid'},
+        {uri: 'file:///my-theme/sections/other.liquid'},
+      ] as Theme
+
+      vi.mocked(themeCheckRun).mockResolvedValue({
+        offenses: [targetOffense, otherOffense],
+        theme: mockTheme,
+        config: {context: 'theme', settings: {}, checks: [], rootUri: ''},
+      })
+
+      const {offenses, theme} = await runThemeCheck('/my-theme', 'json')
+
+      expect(offenses).toEqual([targetOffense, otherOffense])
+      expect(theme).toEqual(mockTheme)
+    })
+  })
+
+  describe('run with a single file argument', () => {
+    const fixtureFile = joinPath(__dirname, '../../utilities/fixtures/theme/sections/announcement-bar.liquid')
+    const themeRoot = joinPath(__dirname, '../../utilities/fixtures/theme')
+
+    test('resolves the theme root for the file and checks it, filtering to that file', async () => {
+      vi.mocked(findRoot).mockResolvedValue(`file://${themeRoot}`)
+
+      const targetOffense: Offense = {
+        type: SourceCodeType.LiquidHtml,
+        check: 'SomeCheck',
+        message: 'Some message',
+        uri: `file://${fixtureFile}`,
+        severity: Severity.WARNING,
+        start: {index: 0, line: 0, character: 0},
+        end: {index: 1, line: 0, character: 1},
+      }
+
+      vi.mocked(themeCheckRun).mockImplementation(async (root) => {
+        expect(root).toBe(themeRoot)
+        return {
+          offenses: [targetOffense],
+          theme: [{uri: `file://${fixtureFile}`}] as Theme,
+          config: {context: 'theme', settings: {}, checks: [], rootUri: ''},
+        }
+      })
+
+      await CommandConfig.load()
+      const check = new Check([fixtureFile], CommandConfig)
+      await check.run()
+
+      expect(themeCheckRun).toHaveBeenCalledWith(themeRoot, undefined, expect.any(Function))
+    })
+
+    test('rejects a file that is not a .liquid or .json file', async () => {
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+        throw new Error('exit')
+      })
+
+      await CommandConfig.load()
+      const check = new Check([joinPath(themeRoot, 'assets/base.css')], CommandConfig)
+
+      await expect(check.run()).rejects.toThrow('exit')
+      expect(exitSpy).toHaveBeenCalledWith(1)
+      expect(themeCheckRun).not.toHaveBeenCalled()
     })
   })
 })

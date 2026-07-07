@@ -13,24 +13,42 @@ import {
   type FailLevel,
 } from '../../services/check.js'
 import {themeFlags} from '../../flags.js'
-import {Flags} from '@oclif/core'
+import {Args, Flags} from '@oclif/core'
 import {globalFlags} from '@shopify/cli-kit/node/cli'
 import {outputResult, outputDebug} from '@shopify/cli-kit/node/output'
-import {renderInfo, renderSuccess} from '@shopify/cli-kit/node/ui'
-import {themeCheckRun, LegacyIdentifiers} from '@shopify/theme-check-node'
-import {findPathUp} from '@shopify/cli-kit/node/fs'
-import {moduleDirectory, joinPath} from '@shopify/cli-kit/node/path'
+import {renderError, renderInfo, renderSuccess} from '@shopify/cli-kit/node/ui'
+import {
+  themeCheckRun,
+  LegacyIdentifiers,
+  findRoot,
+  makeFileExists,
+  NodeFileSystem,
+  path as pathUtils,
+} from '@shopify/theme-check-node'
+import {findPathUp, fileExistsSync, isDirectorySync} from '@shopify/cli-kit/node/fs'
+import {moduleDirectory, joinPath, resolvePath} from '@shopify/cli-kit/node/path'
 import {getPackageVersion} from '@shopify/cli-kit/node/node-package-manager'
-import {InferredFlags} from '@oclif/core/interfaces'
+import {InferredArgs, InferredFlags} from '@oclif/core/interfaces'
 import {AdminSession} from '@shopify/cli-kit/node/session'
 
 type CheckFlags = InferredFlags<typeof Check.flags>
+type CheckArgs = InferredArgs<typeof Check.args>
 export default class Check extends ThemeCommand {
   static summary = 'Validate the theme.'
 
-  static descriptionWithMarkdown = `Calls and runs [Theme Check](https://shopify.dev/docs/themes/tools/theme-check) to analyze your theme code for errors and to ensure that it follows theme and Liquid best practices. [Learn more about the checks that Theme Check runs.](https://shopify.dev/docs/themes/tools/theme-check/checks)`
+  static descriptionWithMarkdown = `Calls and runs [Theme Check](https://shopify.dev/docs/themes/tools/theme-check) to analyze your theme code for errors and to ensure that it follows theme and Liquid best practices. [Learn more about the checks that Theme Check runs.](https://shopify.dev/docs/themes/tools/theme-check/checks) Pass a path to a single \`.liquid\` or \`.json\` theme file to check only that file.`
 
   static description = this.descriptionWithoutMarkdown()
+
+  static usage = 'theme check [path] [flags]'
+
+  static args = {
+    path: Args.string({
+      name: 'path',
+      description: 'Path to a theme file or directory to check. Defaults to checking the whole theme (see --path).',
+      required: false,
+    }),
+  }
 
   static flags = {
     ...globalFlags,
@@ -91,14 +109,30 @@ export default class Check extends ThemeCommand {
 
   static multiEnvironmentsFlags: RequiredFlags = ['path']
 
-  async command(flags: CheckFlags, _session: AdminSession, multiEnvironment: boolean): Promise<void> {
+  async command(flags: CheckFlags, _session: AdminSession, multiEnvironment: boolean, args: CheckArgs): Promise<void> {
     // Its not clear to typescript that path will always be defined
-    const path = flags.path
+    const inputPath = args.path ? resolveArgPath(args.path) : flags.path
     const environment = flags.environment?.[0]
     // To support backwards compatibility for legacy configs
     const isLegacyConfig = flags.config?.startsWith(':') && LegacyIdentifiers.has(flags.config.slice(1))
 
     const config = isLegacyConfig ? LegacyIdentifiers.get(flags.config!.slice(1)) : flags.config
+
+    // A single theme file can be provided instead of a directory. When that
+    // happens, we still need the theme's root directory to build full theme
+    // context (e.g. cross-file checks), so we resolve it and only report
+    // offenses for the given file.
+    const targetFile = inputPath && !isDirectorySync(inputPath) ? inputPath : undefined
+
+    if (targetFile && !/\.(?:liquid|json)$/.test(targetFile)) {
+      renderError({
+        headline: 'Theme Check only supports .liquid and .json files.',
+        body: [`Please check the path and try again: ${targetFile}`],
+      })
+      return process.exit(1)
+    }
+
+    const path = targetFile ? await resolveThemeRootForFile(targetFile) : inputPath
 
     if (flags.init) {
       await initConfig(path)
@@ -138,7 +172,7 @@ export default class Check extends ThemeCommand {
       return
     }
 
-    const {offenses, theme} = await runThemeCheck(path, flags.output, config, environment)
+    const {offenses, theme} = await runThemeCheck(path, flags.output, config, environment, targetFile)
 
     if (flags['auto-correct']) {
       await performAutoFixes(theme, offenses)
@@ -150,12 +184,60 @@ export default class Check extends ThemeCommand {
   }
 }
 
-export async function runThemeCheck(path: string, outputFormat: string, config?: string, environment?: string) {
-  const {offenses, theme} = await themeCheckRun(path, config, (message) => {
+function resolveArgPath(input: string): string {
+  const resolvedPath = resolvePath(input)
+
+  if (!fileExistsSync(resolvedPath)) {
+    renderError({
+      headline: "A path was explicitly provided but doesn't exist.",
+      body: [`Please check the path and try again: ${resolvedPath}`],
+    })
+    return process.exit(1)
+  }
+
+  return resolvedPath
+}
+
+/**
+ * Finds the theme root for a single theme file by walking up parent
+ * directories looking for a `.theme-check.yml`, `.git`, or the theme
+ * directory structure (`assets` + `snippets`), mirroring theme-check's own
+ * root inference so that cross-file checks still have full theme context.
+ */
+async function resolveThemeRootForFile(filePath: string): Promise<string> {
+  const fileUri = pathUtils.normalize(pathUtils.URI.file(filePath))
+  const rootUri = await findRoot(pathUtils.dirname(fileUri), makeFileExists(NodeFileSystem))
+
+  if (!rootUri) {
+    renderError({
+      headline: "Couldn't determine the theme root for the given file.",
+      body: [`Please check the path and try again: ${filePath}`],
+    })
+    return process.exit(1)
+  }
+
+  return pathUtils.fsPath(rootUri)
+}
+
+export async function runThemeCheck(
+  path: string,
+  outputFormat: string,
+  config?: string,
+  environment?: string,
+  targetFile?: string,
+) {
+  const {offenses: allOffenses, theme: allSourceCodes} = await themeCheckRun(path, config, (message) => {
     if (process.env.SHOPIFY_TMP_FLAG_DEBUG) {
       outputDebug(message)
     }
   })
+
+  const offenses = targetFile
+    ? allOffenses.filter((offense) => pathUtils.fsPath(offense.uri) === targetFile)
+    : allOffenses
+  const theme = targetFile
+    ? allSourceCodes.filter((sourceCode) => pathUtils.fsPath(sourceCode.uri) === targetFile)
+    : allSourceCodes
 
   const offensesByFile = sortOffenses(offenses)
 
