@@ -36,11 +36,9 @@ type CheckArgs = InferredArgs<typeof Check.args>
 export default class Check extends ThemeCommand {
   static summary = 'Validate the theme.'
 
-  static descriptionWithMarkdown = `Calls and runs [Theme Check](https://shopify.dev/docs/themes/tools/theme-check) to analyze your theme code for errors and to ensure that it follows theme and Liquid best practices. [Learn more about the checks that Theme Check runs.](https://shopify.dev/docs/themes/tools/theme-check/checks) Pass a path to a single \`.liquid\` or \`.json\` theme file to check only that file.`
+  static descriptionWithMarkdown = `Calls and runs [Theme Check](https://shopify.dev/docs/themes/tools/theme-check) to analyze your theme code for errors and to ensure that it follows theme and Liquid best practices. [Learn more about the checks that Theme Check runs.](https://shopify.dev/docs/themes/tools/theme-check/checks)`
 
   static description = this.descriptionWithoutMarkdown()
-
-  static usage = 'theme check [path] [flags]'
 
   static args = {
     path: Args.string({

@@ -86,7 +86,7 @@
 * [`shopify store execute`](#shopify-store-execute)
 * [`shopify store graphiql`](#shopify-store-graphiql)
 * [`shopify store info`](#shopify-store-info)
-* [`shopify theme check [path] [flags]`](#shopify-theme-check-path-flags)
+* [`shopify theme check [PATH]`](#shopify-theme-check-path)
 * [`shopify theme console`](#shopify-theme-console)
 * [`shopify theme delete`](#shopify-theme-delete)
 * [`shopify theme dev`](#shopify-theme-dev)
@@ -3591,13 +3591,15 @@ EXAMPLES
   $ shopify store info --store shop.myshopify.com --json
 ```
 
-## `shopify theme check [path] [flags]`
+## `shopify theme check [PATH]`
 
 Validate the theme.
 
 ```
 USAGE
-  $ shopify theme check [path] [flags]
+  $ shopify theme check [PATH] [-a] [-C <value>] [-e <value>...] [--fail-level
+    crash|error|suggestion|style|warning|info] [--init] [--list] [--no-color] [-o text|json] [--path <value>] [--print]
+    [--verbose] [-v]
 
 ARGUMENTS
   [PATH]  Path to a theme file or directory to check. Defaults to checking the whole theme (see --path).
@@ -3661,8 +3663,7 @@ DESCRIPTION
 
   Calls and runs "Theme Check" (https://shopify.dev/docs/themes/tools/theme-check) to analyze your theme code for errors
   and to ensure that it follows theme and Liquid best practices. "Learn more about the checks that Theme Check runs."
-  (https://shopify.dev/docs/themes/tools/theme-check/checks) Pass a path to a single `.liquid` or `.json` theme file to
-  check only that file.
+  (https://shopify.dev/docs/themes/tools/theme-check/checks)
 ```
 
 ## `shopify theme console`
