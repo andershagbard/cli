@@ -13,24 +13,34 @@ import {
   type FailLevel,
 } from '../../services/check.js'
 import {themeFlags} from '../../flags.js'
-import {Flags} from '@oclif/core'
+import {Args, Flags} from '@oclif/core'
 import {globalFlags} from '@shopify/cli-kit/node/cli'
 import {outputResult, outputDebug} from '@shopify/cli-kit/node/output'
-import {renderInfo, renderSuccess} from '@shopify/cli-kit/node/ui'
-import {themeCheckRun, LegacyIdentifiers} from '@shopify/theme-check-node'
-import {findPathUp} from '@shopify/cli-kit/node/fs'
-import {moduleDirectory, joinPath} from '@shopify/cli-kit/node/path'
+import {renderError, renderInfo, renderSuccess} from '@shopify/cli-kit/node/ui'
+import {themeCheckRun, loadConfig, LegacyIdentifiers, path as pathUtils} from '@shopify/theme-check-node'
+import {findPathUp, fileExistsSync, isDirectorySync, matchGlob} from '@shopify/cli-kit/node/fs'
+import {moduleDirectory, joinPath, resolvePath, relativePath, isAbsolutePath} from '@shopify/cli-kit/node/path'
 import {getPackageVersion} from '@shopify/cli-kit/node/node-package-manager'
-import {InferredFlags} from '@oclif/core/interfaces'
+import {InferredArgs, InferredFlags} from '@oclif/core/interfaces'
 import {AdminSession} from '@shopify/cli-kit/node/session'
 
 type CheckFlags = InferredFlags<typeof Check.flags>
+type CheckArgs = InferredArgs<typeof Check.args>
 export default class Check extends ThemeCommand {
   static summary = 'Validate the theme.'
 
   static descriptionWithMarkdown = `Calls and runs [Theme Check](https://shopify.dev/docs/themes/tools/theme-check) to analyze your theme code for errors and to ensure that it follows theme and Liquid best practices. [Learn more about the checks that Theme Check runs.](https://shopify.dev/docs/themes/tools/theme-check/checks)`
 
   static description = this.descriptionWithoutMarkdown()
+
+  static args = {
+    target: Args.string({
+      name: 'target',
+      description:
+        'A theme file, directory, or glob pattern to check, relative to --path (e.g. "sections/*.liquid"). When provided, only offenses matching it are reported.',
+      required: false,
+    }),
+  }
 
   static flags = {
     ...globalFlags,
@@ -91,7 +101,7 @@ export default class Check extends ThemeCommand {
 
   static multiEnvironmentsFlags: RequiredFlags = ['path']
 
-  async command(flags: CheckFlags, _session: AdminSession, multiEnvironment: boolean): Promise<void> {
+  async command(flags: CheckFlags, _session: AdminSession, multiEnvironment: boolean, args: CheckArgs): Promise<void> {
     // Its not clear to typescript that path will always be defined
     const path = flags.path
     const environment = flags.environment?.[0]
@@ -99,6 +109,24 @@ export default class Check extends ThemeCommand {
     const isLegacyConfig = flags.config?.startsWith(':') && LegacyIdentifiers.has(flags.config.slice(1))
 
     const config = isLegacyConfig ? LegacyIdentifiers.get(flags.config!.slice(1)) : flags.config
+
+    // The target argument builds on top of --path: it can narrow the check
+    // down to a single file, a subdirectory, or a glob pattern within the
+    // theme rooted at --path. .theme-check.yml can redirect the actual theme
+    // root via its own `root:` property, so the target needs to be resolved
+    // against that effective root rather than the raw --path value.
+    const isTargetGlob = args.target ? isGlobPattern(args.target) : false
+    const target = args.target
+      ? resolveTarget(await resolveEffectiveRoot(path, config), args.target, isTargetGlob)
+      : undefined
+
+    if (target && !isTargetGlob && !isDirectorySync(target) && !/\.(?:liquid|json)$/.test(target)) {
+      renderError({
+        headline: 'Theme Check only supports .liquid and .json files.',
+        body: [`Please check the path and try again: ${target}`],
+      })
+      return process.exit(1)
+    }
 
     if (flags.init) {
       await initConfig(path)
@@ -138,7 +166,7 @@ export default class Check extends ThemeCommand {
       return
     }
 
-    const {offenses, theme} = await runThemeCheck(path, flags.output, config, environment)
+    const {offenses, theme} = await runThemeCheck(path, flags.output, config, environment, target, isTargetGlob)
 
     if (flags['auto-correct']) {
       await performAutoFixes(theme, offenses)
@@ -150,12 +178,97 @@ export default class Check extends ThemeCommand {
   }
 }
 
-export async function runThemeCheck(path: string, outputFormat: string, config?: string, environment?: string) {
-  const {offenses, theme} = await themeCheckRun(path, config, (message) => {
+const GLOB_METACHARACTERS = /[*?{}[\]]/
+
+/**
+ * Whether a target argument should be treated as a glob pattern rather than
+ * a literal file or directory path.
+ */
+function isGlobPattern(target: string): boolean {
+  return GLOB_METACHARACTERS.test(target)
+}
+
+/**
+ * .theme-check.yml can redirect the actual theme root via its own `root:`
+ * property, relative to --path. Loading the config mirrors what
+ * themeCheckRun does internally, so the target resolves against the same
+ * root theme-check actually scans.
+ */
+async function resolveEffectiveRoot(root: string, config?: string): Promise<string> {
+  const {rootUri} = await loadConfig(config, root)
+  return pathUtils.fsPath(rootUri)
+}
+
+/**
+ * Resolves the `target` argument against the theme root (--path). Absolute
+ * targets are used as-is; relative ones are resolved on top of the root.
+ * Glob patterns aren't checked for existence, since they describe a set of
+ * files rather than a single path.
+ */
+function resolveTarget(root: string, target: string, isGlob: boolean): string {
+  const resolvedTarget = resolvePath(root, target)
+
+  if (isGlob) {
+    return resolvedTarget
+  }
+
+  if (!fileExistsSync(resolvedTarget)) {
+    renderError({
+      headline: "A path was explicitly provided but doesn't exist.",
+      body: [`Please check the path and try again: ${resolvedTarget}`],
+    })
+    return process.exit(1)
+  }
+
+  return resolvedTarget
+}
+
+/**
+ * Whether a theme file's fs path is the target itself, or lives underneath
+ * it when the target is a directory.
+ */
+function isWithinTarget(filePath: string, target: string): boolean {
+  if (filePath === target) return true
+
+  const relative = relativePath(target, filePath)
+  return relative !== '' && !relative.startsWith('..') && !isAbsolutePath(relative)
+}
+
+/**
+ * minimatch (used by matchGlob) expects forward slashes on all platforms.
+ */
+function toGlobPath(value: string): string {
+  return value.replace(/\\/g, '/')
+}
+
+function matchesTarget(filePath: string, target: string, isTargetGlob: boolean): boolean {
+  if (isTargetGlob) {
+    return matchGlob(toGlobPath(filePath), toGlobPath(target))
+  }
+
+  return isWithinTarget(filePath, target)
+}
+
+export async function runThemeCheck(
+  path: string,
+  outputFormat: string,
+  config?: string,
+  environment?: string,
+  target?: string,
+  isTargetGlob = false,
+) {
+  const {offenses: allOffenses, theme: allSourceCodes} = await themeCheckRun(path, config, (message) => {
     if (process.env.SHOPIFY_TMP_FLAG_DEBUG) {
       outputDebug(message)
     }
   })
+
+  const offenses = target
+    ? allOffenses.filter((offense) => matchesTarget(pathUtils.fsPath(offense.uri), target, isTargetGlob))
+    : allOffenses
+  const theme = target
+    ? allSourceCodes.filter((sourceCode) => matchesTarget(pathUtils.fsPath(sourceCode.uri), target, isTargetGlob))
+    : allSourceCodes
 
   const offensesByFile = sortOffenses(offenses)
 

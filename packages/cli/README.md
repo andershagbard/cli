@@ -86,7 +86,7 @@
 * [`shopify store execute`](#shopify-store-execute)
 * [`shopify store graphiql`](#shopify-store-graphiql)
 * [`shopify store info`](#shopify-store-info)
-* [`shopify theme check`](#shopify-theme-check)
+* [`shopify theme check [TARGET]`](#shopify-theme-check-target)
 * [`shopify theme console`](#shopify-theme-console)
 * [`shopify theme delete`](#shopify-theme-delete)
 * [`shopify theme dev`](#shopify-theme-dev)
@@ -3591,15 +3591,19 @@ EXAMPLES
   $ shopify store info --store shop.myshopify.com --json
 ```
 
-## `shopify theme check`
+## `shopify theme check [TARGET]`
 
 Validate the theme.
 
 ```
 USAGE
-  $ shopify theme check [-a] [-C <value>] [-e <value>...] [--fail-level
+  $ shopify theme check [TARGET] [-a] [-C <value>] [-e <value>...] [--fail-level
     crash|error|suggestion|style|warning|info] [--init] [--list] [--no-color] [-o text|json] [--path <value>] [--print]
     [--verbose] [-v]
+
+ARGUMENTS
+  [TARGET]  A theme file, directory, or glob pattern to check, relative to --path (e.g. "sections/*.liquid"). When
+            provided, only offenses matching it are reported.
 
 FLAGS
   -C, --config=<value>

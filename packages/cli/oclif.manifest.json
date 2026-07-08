@@ -6925,6 +6925,11 @@
       "aliases": [
       ],
       "args": {
+        "target": {
+          "description": "A theme file, directory, or glob pattern to check, relative to --path (e.g. \"sections/*.liquid\"). When provided, only offenses matching it are reported.",
+          "name": "target",
+          "required": false
+        }
       },
       "customPluginName": "@shopify/theme",
       "description": "Calls and runs \"Theme Check\" (https://shopify.dev/docs/themes/tools/theme-check) to analyze your theme code for errors and to ensure that it follows theme and Liquid best practices. \"Learn more about the checks that Theme Check runs.\" (https://shopify.dev/docs/themes/tools/theme-check/checks)",
